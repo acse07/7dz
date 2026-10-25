@@ -82,20 +82,32 @@ export default function App() {
     formData.set('title', title);
     formData.set('description', description);
     const image = formData.get('image');
-    if (image instanceof File && image.size === 0) formData.delete('image');
+    if (!(image instanceof File) || image.size === 0) {
+      setFormError('Выберите фото: сервер требует изображение для объявления.');
+      return;
+    }
 
     setSending(true);
     try {
       // Content-Type не задаём: браузер сам добавит границу multipart/form-data.
       const response = await fetch(`${API}/ads`, { method: 'POST', body: formData });
-      if (!response.ok) throw new Error('Ошибка отправки');
+      if (!response.ok) {
+        if (response.status === 413) throw new Error('Фото слишком большое. Выберите файл поменьше.');
+        const error: { detail?: unknown } = await response.json().catch(() => ({}));
+        const detail = typeof error.detail === 'string' ? error.detail : '';
+        throw new Error(detail || (response.status === 422
+          ? 'Сервер не принял данные. Проверьте поля и выберите фото.'
+          : `Ошибка сервера (${response.status}). Попробуйте отправить позже.`));
+      }
       const created: Ad = await response.json();
       form.reset();
       setFormMessage(`Объявление «${created.title}» опубликовано!`);
       setPage(1);
       await loadAds();
-    } catch {
-      setFormError('Не удалось отправить объявление. Проверьте соединение и попробуйте снова.');
+    } catch (error) {
+      setFormError(error instanceof TypeError
+        ? 'Нет связи с сервером. Проверьте интернет и попробуйте снова.'
+        : error instanceof Error ? error.message : 'Не удалось отправить объявление.');
     } finally {
       setSending(false);
     }
@@ -118,7 +130,7 @@ export default function App() {
             <label>Название<input name="title" required maxLength={200} /></label>
             <label>Описание<textarea name="description" required rows={3} maxLength={5000} /></label>
             <label>Цена (сом)<input name="price" type="number" min="0" step="0.01" required /></label>
-            <label>Фото (необязательно)<input name="image" type="file" accept="image/*" /></label>
+            <label>Фото (обязательно)<input name="image" type="file" accept="image/*" required /></label>
             <button type="submit">{sending ? 'Отправка…' : 'Опубликовать'}</button>
           </fieldset>
           {formError && <p role="alert" className="error">{formError}</p>}
