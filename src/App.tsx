@@ -3,6 +3,8 @@ import type { SubmitEvent } from 'react';
 
 const API = 'https://inai-col1.fishrungames.com';
 const LIMIT = 12;
+// Старые объявления, которые убрали с этого сайта. Новые публикации будут видны.
+const HIDDEN_IDS = [1, 2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 18, 19];
 
 type Ad = {
   id: number;
@@ -21,7 +23,6 @@ type AdsResponse = {
 
 export default function App() {
   const [ads, setAds] = useState<Ad[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
@@ -29,18 +30,26 @@ export default function App() {
   const [formMessage, setFormMessage] = useState('');
   const [formError, setFormError] = useState('');
 
-  // GET: загружаем объявления при открытии страницы и переключении страниц.
-  async function loadAds(currentPage: number, signal?: AbortSignal) {
+  // GET: загружаем объявления и убираем скрытые записи.
+  async function loadAds(signal?: AbortSignal) {
     setLoading(true);
     setListError('');
     try {
-      const response = await fetch(`${API}/ads?page=${currentPage}&limit=${LIMIT}`, { signal });
-      if (!response.ok) throw new Error('Ошибка загрузки');
-      const data: AdsResponse = await response.json();
-      setAds(data.items);
-      setTotal(data.total);
-      const lastPage = Math.max(1, Math.ceil(data.total / LIMIT));
-      if (currentPage > lastPage) setPage(lastPage);
+      const items: Ad[] = [];
+      let requestPage = 1;
+      let total = 0;
+      do {
+        const response = await fetch(`${API}/ads?page=${requestPage}&limit=100`, { signal });
+        if (!response.ok) throw new Error('Ошибка загрузки');
+        const data: AdsResponse = await response.json();
+        items.push(...data.items);
+        total = data.total;
+        requestPage++;
+        if (data.items.length === 0) break;
+      } while (items.length < total);
+      const visibleAds = items.filter(ad => !HIDDEN_IDS.includes(ad.id));
+      setAds(visibleAds);
+      setPage(current => Math.min(current, Math.max(1, Math.ceil(visibleAds.length / LIMIT))));
     } catch {
       if (!signal?.aborted) setListError('Не удалось загрузить объявления. Попробуйте ещё раз.');
     } finally {
@@ -50,9 +59,9 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadAds(page, controller.signal);
+    void loadAds(controller.signal);
     return () => controller.abort();
-  }, [page]);
+  }, []);
 
   // POST: FormData передаёт текстовые поля и выбранное изображение.
   async function submitAd(event: SubmitEvent<HTMLFormElement>) {
@@ -83,8 +92,8 @@ export default function App() {
       const created: Ad = await response.json();
       form.reset();
       setFormMessage(`Объявление «${created.title}» опубликовано!`);
-      if (page === 1) await loadAds(1);
-      else setPage(1);
+      setPage(1);
+      await loadAds();
     } catch {
       setFormError('Не удалось отправить объявление. Проверьте соединение и попробуйте снова.');
     } finally {
@@ -92,7 +101,8 @@ export default function App() {
     }
   }
 
-  const pages = Math.max(1, Math.ceil(total / LIMIT));
+  const pages = Math.max(1, Math.ceil(ads.length / LIMIT));
+  const pageAds = ads.slice((page - 1) * LIMIT, page * LIMIT);
 
   return (
     <main>
@@ -118,14 +128,14 @@ export default function App() {
 
       <section aria-labelledby="ads-title">
         <div className="list-heading">
-          <h2 id="ads-title">Объявления ({total})</h2>
-          <button disabled={loading || sending} onClick={() => void loadAds(page)}>Обновить</button>
+          <h2 id="ads-title">Объявления ({ads.length})</h2>
+          <button disabled={loading || sending} onClick={() => void loadAds()}>Обновить</button>
         </div>
         {loading ? <p role="status">Загрузка объявлений…</p> : listError ? (
           <p role="alert" className="error">{listError}</p>
         ) : ads.length === 0 ? <p>Объявлений пока нет. Добавьте первое!</p> : (
           <div className="ads">
-            {ads.map(ad => (
+            {pageAds.map(ad => (
               <article key={ad.id}>
                 {ad.image_url ? (
                   <img src={new URL(ad.image_url, API).href} alt={ad.title} loading="lazy" />
@@ -137,11 +147,11 @@ export default function App() {
             ))}
           </div>
         )}
-        <nav aria-label="Страницы объявлений">
+        {pages > 1 && <nav aria-label="Страницы объявлений">
           <button disabled={page === 1 || loading || sending} onClick={() => setPage(page - 1)}>Назад</button>
           <span>Страница {page} из {pages}</span>
           <button disabled={page >= pages || loading || sending} onClick={() => setPage(page + 1)}>Далее</button>
-        </nav>
+        </nav>}
       </section>
       <footer>Учебный проект · React + TypeScript</footer>
     </main>
